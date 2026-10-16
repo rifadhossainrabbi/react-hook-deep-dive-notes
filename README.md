@@ -470,3 +470,432 @@ documentation যাচাই করুন।
 **Learning goal:** React-এ render, reference, Effect dependency এবং
 memoization কীভাবে একে অপরের সঙ্গে সম্পর্কিত---তা বুঝে প্রয়োজন অনুযায়ী সঠিক
 Hook ব্যবহার করা।
+
+
+
+                 In English
+
+
+React Learning Notes: useCallback, useEffect, Strict Mode, and React Compiler
+My learning notes on React function references, Effect dependencies,
+memoization, and performance optimization, with practical examples.
+
+Table of Contents
+Why Can Functions Get a New Reference on Every
+Render?
+
+useEffect and Dependency
+Arrays
+
+useCallback: What It Does and When to Use
+It
+
+React.memo + useCallback
+Example
+
+Avoiding Stale Closures
+
+My Banner Component Experiment
+
+Why Strict Mode Can Produce Extra
+Logs
+
+The Effect of React Compiler
+
+Testing with 'use no memo'
+
+Key Takeaways
+
+What I Plan to Learn Next
+
+1. Why Can Functions Get a New Reference on Every Render?
+A React function component runs again when React renders it. Ordinary
+functions declared inside the component body are generally recreated on
+each render.
+
+(() => {}) === (() => {}); // false
+Even though the two functions look identical, they are different
+function objects.
+
+const sayHello = () => {
+  console.log('Hello');
+};
+Without compiler optimization, sayHello will generally receive a new
+reference when the component renders again.
+
+Remember: This is not automatically a problem. It matters when a
+function reference is compared with another value---for example, as a
+useEffect dependency or as a prop passed to a memoized child
+component.
+
+2. useEffect and Dependency Arrays
+useEffect is used to synchronize a component with external systems,
+such as browser APIs, subscriptions, event listeners, or network
+requests.
+
+useEffect(() => {
+  // Effect logic
+}, [dependencies]);
+The Three Common Forms
+Code When the Effect runs
+
+useEffect(() => { ... }) After every committed render
+
+useEffect(() => { ... }, []) After mounting; in development
+Strict Mode, React may run an extra
+setup/cleanup cycle
+
+A Dependency Is Not a Function Call
+useEffect(() => {
+  console.log('Effect is running');
+}, [sayHello]);
+This does not call sayHello. React compares the current dependency
+with its previous value. If the dependency changes, React runs the
+Effect again.
+
+Expression Meaning
+
+sayHello The function reference
+sayHello() Call the function
+
+Using a Function as a Dependency
+const sayHello = () => {
+  console.log('Hello');
+};
+
+useEffect(() => {
+  console.log('Effect ran because its dependency changed');
+}, [sayHello]);
+Normally, if sayHello receives a new reference on every render, the
+Effect runs after each committed render.
+
+A Common Infinite Loop Pattern
+useEffect(() => {
+  setCount(count + 1);
+}, [count]);
+The Effect updates count, which triggers another render. The changed
+dependency causes the Effect to run again, potentially creating an
+infinite loop.
+
+For API requests, adding an empty dependency array is not always the
+correct solution. Include the reactive values the Effect uses, and
+consider cancellation or cleanup when appropriate.
+
+3. useCallback: What It Does and When to Use It
+useCallback helps preserve a function reference between renders until
+one of its dependencies changes.
+
+import { useCallback } from 'react';
+
+const sayHello = useCallback(() => {
+  console.log('Hello');
+}, []);
+The empty dependency array means this callback has no reactive
+dependencies.
+
+When Can It Be Useful?
+Passing a callback to a memoized child: A stable function
+reference can help prevent unnecessary child renders.
+
+Using a function as a Hook dependency: A stable reference can
+help avoid unnecessary Effect re-runs.
+
+Addressing measured performance issues: Use profiling to
+identify unnecessary work before optimizing.
+
+When Might It Not Be Necessary?
+The function is not passed to a memoized child.
+
+The function reference is not compared or used as a dependency
+elsewhere.
+
+The component is small and there is no meaningful performance issue.
+
+Memoization adds complexity without a measurable benefit.
+
+Tip: Do not wrap every function in useCallback. First determine
+whether keeping its reference stable provides a real benefit.
+
+4. React.memo + useCallback Example
+import { memo, useCallback, useState } from 'react';
+
+type Product = {
+  id: number;
+  name: string;
+};
+
+type ProductCardProps = {
+  product: Product;
+  onWishlist: (id: number) => void;
+};
+
+const ProductCard = memo(function ProductCard({
+  product,
+  onWishlist,
+}: ProductCardProps) {
+  console.log('Rendering:', product.name);
+
+  return (
+    <div>
+      <h3>{product.name}</h3>
+      <button onClick={() => onWishlist(product.id)}>
+        Add to wishlist
+      </button>
+    </div>
+  );
+});
+
+export default function Products() {
+  const [search, setSearch] = useState('');
+  const [wishlist, setWishlist] = useState<number[]>([]);
+
+  const products: Product[] = [
+    { id: 1, name: 'iPhone 12' },
+    { id: 2, name: 'Samsung S21' },
+  ];
+
+  const handleWishlist = useCallback((id: number) => {
+    setWishlist((previous) => [...previous, id]);
+  }, []);
+
+  const filteredProducts = products.filter((product) =>
+    product.name.toLowerCase().includes(search.toLowerCase())
+  );
+
+  return (
+    <>
+      <input
+        value={search}
+        onChange={(event) => setSearch(event.target.value)}
+        placeholder="Search products"
+      />
+
+      {filteredProducts.map((product) => (
+        <ProductCard
+          key={product.id}
+          product={product}
+          onWishlist={handleWishlist}
+        />
+      ))}
+
+      <p>Wishlist items: {wishlist.length}</p>
+    </>
+  );
+}
+What Happens Here?
+Typing in the search field causes Products to render again.
+
+handleWishlist keeps the same reference because it is wrapped in
+useCallback.
+
+Since ProductCard is wrapped in memo, it can skip rendering when
+its props remain unchanged.
+
+When the filtered list changes, cards may be added or removed. That
+is expected.
+
+The products array and its objects are created inside the
+component, so their references change on every render. This can
+cause ProductCard to render again even if handleWishlist is
+stable. If needed, move static data outside the component or use an
+appropriate memoization strategy.
+
+The callback uses a functional state update:
+
+setWishlist((previous) => [...previous, id]);
+This avoids reading the current wishlist value from the closure, so
+the callback does not need wishlist in its dependency array.
+
+5. Avoiding Stale Closures
+If a callback uses state or props, its dependencies must be correct.
+Otherwise, it may keep reading an old value. This is known as a stale
+closure.
+
+Incorrect
+const handleClick = useCallback(() => {
+  console.log(count);
+}, []); // count is missing
+The callback may keep using an old count value.
+
+Correct
+const handleClick = useCallback(() => {
+  console.log(count);
+}, [count]);
+When updating state based on its previous value, a functional update can
+help:
+
+const increment = useCallback(() => {
+  setCount((previous) => previous + 1);
+}, []);
+6. My Banner Component Experiment
+Here is the component I used for testing:
+
+'use client';
+
+import { useEffect, useState } from 'react';
+
+export default function Banner() {
+  const [count, setCount] = useState(0);
+
+  const sayHello = () => {
+    console.log('Hello');
+  };
+
+  console.log('Banner rendered');
+
+  useEffect(() => {
+    console.log('Effect ran because of the sayHello dependency');
+  }, [sayHello]);
+
+  return (
+    <button onClick={() => setCount((previous) => previous + 1)}>
+      Count: {count}
+    </button>
+  );
+}
+What Should Happen?
+Hello is not logged because sayHello() is never called.
+
+The console.log inside the component body runs whenever the
+component renders.
+
+If the compiler does not memoize the ordinary function, sayHello
+gets a new reference on each render. The Effect should then run
+after each committed render.
+
+In development, Strict Mode can cause additional render and initial
+Effect logs.
+
+What I Observed
+At first, I saw Banner rendered and the Effect message twice.
+
+After clicking the Count button, Banner rendered appeared
+repeatedly.
+
+However, the Effect message did not appear again after clicks.
+
+This observation alone does not prove that React Compiler is
+responsible. The project configuration, whether the compiler is actually
+active, Strict Mode, and the browser console should all be checked
+before drawing a conclusion.
+
+7. Why Strict Mode Can Produce Extra Logs
+React Strict Mode performs additional development-only checks to help
+reveal bugs.
+
+Components may render an extra time.
+
+On initial mounting, an Effect may go through an additional setup →
+cleanup → setup cycle.
+
+These extra checks are not performed as the same development-only
+checks in production.
+
+However, an Effect does not necessarily run twice after every state
+update. Whether it runs depends on its dependencies and the Effect's
+behavior.
+
+Do not assume Strict Mode is the cause of every unexpected log.
+
+8. The Effect of React Compiler
+React Compiler analyzes code and can automatically memoize values and
+functions in supported setups. This can reduce the need to manually
+write useCallback, useMemo, or memo.
+
+For example, the compiler may preserve the reference of a function like
+this:
+
+const sayHello = () => {
+  console.log('Hello');
+};
+However, the compiler does not necessarily memoize every function.
+Its behavior depends on the code, compiler analysis, and project
+configuration.
+
+Check the Next.js Configuration
+Check your next.config.ts or next.config.js and the setup for your
+installed Next.js version. Configuration options can vary by version and
+setup.
+
+import type { NextConfig } from 'next';
+
+const nextConfig: NextConfig = {
+  // Add the React Compiler configuration supported by your setup.
+};
+
+export default nextConfig;
+Seeing an option in the configuration file alone does not prove that the
+compiler is actively memoizing a particular function. Verify the project
+setup and use React DevTools where appropriate.
+
+9. Testing with 'use no memo'
+Some React Compiler setups support 'use no memo' as an opt-out
+directive. Check the documentation for the exact compiler version you
+use before relying on it.
+
+'use client';
+'use no memo';
+In a supported setup, this directive tells the compiler not to memoize
+within that scope.
+
+Experiment Steps
+Verify whether React Compiler is enabled in your project.
+
+Clear the browser console and refresh the page.
+
+Click the Count button several times.
+
+Observe the render and Effect logs.
+
+If your compiler setup supports it, test 'use no memo' separately
+and compare the results.
+
+Add useCallback and run the experiment again.
+
+Use this directive for learning and debugging only when supported.
+Avoid adding it to production code without a clear reason.
+
+10. Key Takeaways
+A React component function executes again when React renders the
+component.
+
+Ordinary functions declared inside a component generally get new
+references on each render.
+
+useEffect compares dependency values between renders.
+
+Putting a function in a dependency array does not call that
+function.
+
+useCallback helps keep a function reference stable until its
+dependencies change.
+
+React.memo can skip a child render when its props have not
+changed.
+
+Strict Mode can cause extra development-only renders and an
+additional initial Effect cycle.
+
+React Compiler can automate some memoization, but not necessarily in
+every case.
+
+You do not need to use useCallback for every function.
+
+Understand the behavior first, then use profiling to confirm whether
+an optimization is needed.
+
+11. What I Plan to Learn Next
+Check whether React Compiler is enabled in my Next.js project.
+
+Understand the difference between useMemo and useCallback.
+
+Learn React.memo in more depth.
+
+Understand the cleanup function in useEffect.
+
+Use React DevTools Profiler to investigate re-renders.
+
+Learning goal: Understand how rendering, function references, Effect
+dependencies, and memoization relate to one another---and learn to
+choose the right Hook when it is actually needed.
+
